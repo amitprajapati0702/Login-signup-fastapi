@@ -11,4 +11,8 @@ class User(Base):
     password = Column(String,nullable=False)
     role = Column(String,nullable=False,default="user")
     created_at = Column(DateTime,nullable=False,default=datetime.datetime.utcnow)
+    # Adding OTP Fields
+    otp = Column(String, nullable=True)
+    otp_expiry = Column(DateTime, nullable=True)
+    is_verified = Column(Integer, nullable=False, default=0)
 

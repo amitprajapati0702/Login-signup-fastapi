@@ -1,8 +1,10 @@
-from fastapi import APIRouter,Depends,HTTPException
+from app.utils.otp import create_otp_email_body, generate_otp, get_otp_expiry, is_otp_expired
+from fastapi import APIRouter,Depends,HTTPException # type: ignore
 from app.Database import Base, get_db,engine
 from sqlalchemy.orm import Session
 from app.model import User
-from app.Schema import LoginRequest
+from app.Schema import LoginRequest, MailBody, SendOTPRequest, VerifyOTPRequest
+from app.mailer import send_email
 from app.utils.captcha import generate_captcha,verify_captcha
 router = APIRouter()
 
@@ -51,7 +53,74 @@ def login_user(data : LoginRequest , db:Session = Depends(get_db)):
     
     
     return {"Message":"Login Successful"}
+
+
+### EMAIL SENDING ROUTE ###
+@router.post("/send-email")
+def email_send(data:MailBody):
+    is_sent = send_email(data.model_dump())
+    if not is_sent:
+        raise HTTPException(status_code=500,detail="Email sending failed")
+    return {"Message":"Email sent successfully"}  
+
+### OTP Sending Route ###  
+@router.post("/send-otp")
+def send_otp(data: SendOTPRequest, db: Session = Depends(get_db)):
+    """Send OTP to email"""
+    user = db.query(User).filter(User.email == data.email).first()
     
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Generate OTP
+    otp = generate_otp()
+    otp_expiry = get_otp_expiry()
+    
+    # Save OTP to database
+    user.otp = otp # pyright: ignore[reportAttributeAccessIssue]
+    user.otp_expiry = otp_expiry # pyright: ignore[reportAttributeAccessIssue]
+    db.commit()
+    
+    # Send OTP via email
+    email_body = create_otp_email_body(otp)
+    is_sent = send_email({
+        "to": [data.email],
+        "subject": "Your OTP for Email Verification",
+        "body": email_body
+    })
+    
+    if not is_sent:
+        raise HTTPException(status_code=500, detail="Failed to send OTP")
+    
+    return {"Message": "OTP sent successfully to your email"}
+
+
+### OTP Verification ROute ####
+@router.post("/verify-otp")
+def verify_otp(data: VerifyOTPRequest, db: Session = Depends(get_db)):
+    """Verify OTP"""
+    user = db.query(User).filter(User.email == data.email).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if not user.otp: # type: ignore
+        raise HTTPException(status_code=400, detail="No OTP requested")
+    
+    if is_otp_expired(user.otp_expiry): # type: ignore
+        raise HTTPException(status_code=400, detail="OTP expired")
+    
+    if user.otp != data.otp: # type: ignore
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    # Mark user as verified
+    user.is_verified = 1 # type: ignore
+    user.otp = None # type: ignore
+    user.otp_expiry = None # type: ignore
+    db.commit()
+    
+    return {"Message": "Email verified successfully"}
+
 
 
 
